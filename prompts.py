@@ -4,6 +4,10 @@ If the context does not contain enough information to answer the question, say:
 Do not hallucinate or use external knowledge.
 """
 
+QUERY_REWRITE_PROMPT = """Given the conversation history and a follow-up question, 
+rewrite the follow-up question to be a standalone question that can be understood without the conversation history. 
+If the question is already standalone, return it as is. Only output the rewritten question, nothing else."""
+
 CONTEXT_PRECISION_PROMPT = """
 You are a judge. You will evaluate the quality of the input with respect to this metric.
 
