@@ -42,7 +42,7 @@ def compare_scores_with_threshold(scores: dict):
     
     return result_dict
 
-def evaluate(query, vectorstore, bm25_retriever):
+def evaluate(query, vectorstore, bm25_retriever, verbose = False):
     cp_retry_count = 0
     answer_retry_count = 0
 
@@ -59,6 +59,9 @@ def evaluate(query, vectorstore, bm25_retriever):
     context_precision_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts)})
     context_precision_score = parse_output(context_precision_output)["Context Precision"]
 
+    if verbose:
+        print(f"Context Precision Score in Retry {cp_retry_count}: {context_precision_score}")
+
     best_context_precision_score = context_precision_score
     best_retrieved_chunks = retrieved_texts
 
@@ -70,6 +73,9 @@ def evaluate(query, vectorstore, bm25_retriever):
 
         context_precision_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts)})
         context_precision_score = parse_output(context_precision_output)["Context Precision"]
+
+        if verbose:
+            print(f"Context Precision Score in Retry {cp_retry_count}: {context_precision_score}")
 
         if context_precision_score > best_context_precision_score:
             best_context_precision_score = context_precision_score
@@ -95,6 +101,9 @@ def evaluate(query, vectorstore, bm25_retriever):
     post_answer_judge_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts), "answer": answer})
     post_answer_scores = parse_output(post_answer_judge_output)
     
+    if verbose:
+        print(f"Attempt {answer_retry_count} scores: {post_answer_scores}")
+
     best_metric_scores = post_answer_scores
     best_answer = answer
 
@@ -130,6 +139,9 @@ def evaluate(query, vectorstore, bm25_retriever):
         chain = judge_post_answer_prompt | judge_llm | StrOutputParser()
         post_answer_judge_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts), "answer": answer})
         post_answer_scores = parse_output(post_answer_judge_output)
+
+        if verbose:
+            print(f"Attempt {answer_retry_count} scores: {post_answer_scores}")
 
         if post_answer_scores["Answer Correctness"] != "Unavailable" and best_metric_scores["Answer Correctness"] != "Unavailable":
             if sum(post_answer_scores.values()) > sum(best_metric_scores.values()):
