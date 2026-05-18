@@ -4,9 +4,19 @@ If the context does not contain enough information to answer the question, say:
 Do not hallucinate or use external knowledge.
 """
 
-QUERY_REWRITE_PROMPT = """Given the conversation history and a follow-up question, 
-rewrite the follow-up question to be a standalone question that can be understood without the conversation history. 
-If the question is already standalone, return it as is. Only output the rewritten question, nothing else."""
+QUERY_REWRITE_PROMPT = """Given the conversation history and a follow-up question, rewrite the follow-up question to be a standalone question that can be understood without the conversation history. 
+
+IMPORTANT RULES:
+- Only resolve ambiguous references like "it", "they", "this", "that" using the conversation history.
+- If the question introduces a completely new topic unrelated to the history, return it EXACTLY as written.
+- Never answer the question or add information from your own knowledge.
+- Only output the rewritten question, nothing else.
+
+Example of what NOT to do:
+History: discussion about Paris
+Question: What is the capital of Turkey?
+Wrong output: Ankara
+Correct output: What is the capital of Turkey?"""
 
 CONTEXT_PRECISION_PROMPT = """
 You are a judge. You will evaluate the quality of the input with respect to this metric.
