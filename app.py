@@ -52,9 +52,11 @@ with gr.Blocks() as demo:
         relevancy = gr.Textbox(label="Answer Relevancy")
         correctness = gr.Textbox(label="Answer Correctness")
         cp_score = gr.Textbox(label="Context Precision")
+    with gr.Row():
         pdf_upload = gr.File(label="Upload PDF", file_types=[".pdf"])
         upload_btn = gr.Button("Upload and Ingest")
         upload_status = gr.Textbox(label="Upload Status", interactive=False)
+
     msg.submit(chat, [msg, chatbot], [chatbot, faithfulness, relevancy, correctness, cp_score, sources_box, rewritten_query_box, msg])
     upload_btn.click(upload_pdf, inputs=pdf_upload, outputs=upload_status)
 demo.launch()
