@@ -101,7 +101,7 @@ def chunk_and_store(blocks):
 
 def ingest_pdf(pdf_folder = "./pdfs"):
     vectorstore, bm25_retriever = None, None
-    
+
     if os.path.exists("ingested_files.json"):
         with open("ingested_files.json", "r") as f:
             ingested_files = json.load(f)
@@ -117,5 +117,11 @@ def ingest_pdf(pdf_folder = "./pdfs"):
             ingested_files.append(pdf)
             with open("ingested_files.json", "w") as f:
                 json.dump(ingested_files, f)
+    
+    if vectorstore == None and bm25_retriever == None:
+        vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings, collection_name="doceval")
+        with open("bm25_corpus.json", "r") as f:
+            bm25_corpus = json.load(f)
+        bm25_retriever = BM25Retriever.from_texts(bm25_corpus, k=config.CROSSENCODER_KIN)
 
     return vectorstore, bm25_retriever
