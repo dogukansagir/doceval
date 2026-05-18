@@ -1,3 +1,9 @@
+MAIN_LLM_PROMPT = """You are an AI assistant that answers questions strictly based on the provided context.
+If the context does not contain enough information to answer the question, say:
+"I don't have enough information to answer that."
+Do not hallucinate or use external knowledge.
+"""
+
 CONTEXT_PRECISION_PROMPT = """
 You are a judge. You will evaluate the quality of the input with respect to this metric.
 
