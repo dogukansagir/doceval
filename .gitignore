@@ -7,3 +7,4 @@ doceval-project/
 test.ipynb
 extracted_images/
 bm25_corpus.json
+ingested_files.json

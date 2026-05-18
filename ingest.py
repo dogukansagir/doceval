@@ -59,7 +59,6 @@ def call_vlm_model(block):
       'Extract all data, values, labels and relationships visible in the image. Analyze the data and give me a string about your analysis. you will create strings that are going inside a RAG system. do not omit any information. describe the type and structure of the visual content (table, chart, diagram, figure) before describing its contents.'
         ],
     )
-    print(response.text)
     return response.text
 
 def chunk_and_store(blocks):
