@@ -171,4 +171,4 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False, chat_history =
 
     chat_history.append(HumanMessage(content=query))
     chat_history.append(AIMessage(content=best_answer))
-    return best_answer, best_metric_scores, context_precision_score, chat_history
+    return best_answer, best_metric_scores, context_precision_score, chat_history, retrieved_texts, rewritten_query
