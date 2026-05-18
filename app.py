@@ -2,6 +2,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 import gradio as gr
 from ingest import ingest_pdf
 from eval import evaluate
+import os
+import shutil
 
 def parse_gradio_history(history):
     langchain_history = []
@@ -12,6 +14,20 @@ def parse_gradio_history(history):
             langchain_history.append(AIMessage(content=entry["content"]))
 
     return langchain_history
+
+def upload_pdf(file):
+    if file is None:
+        return "No file uploaded."
+    
+    filename = os.path.basename(file)
+    save_path = f"./pdfs/{filename}"
+    shutil.copy(file, save_path)
+
+    # Ingest the new PDF and update the vectorstore and bm25_retriever
+    global vectorstore, bm25_retriever
+    vectorstore, bm25_retriever = ingest_pdf()
+    
+    return f"File '{filename}' uploaded and ingested successfully."
 
 def chat(message, history):
     langchain_history = parse_gradio_history(history)
@@ -36,5 +52,9 @@ with gr.Blocks() as demo:
         relevancy = gr.Textbox(label="Answer Relevancy")
         correctness = gr.Textbox(label="Answer Correctness")
         cp_score = gr.Textbox(label="Context Precision")
+        pdf_upload = gr.File(label="Upload PDF", file_types=[".pdf"])
+        upload_btn = gr.Button("Upload and Ingest")
+        upload_status = gr.Textbox(label="Upload Status", interactive=False)
     msg.submit(chat, [msg, chatbot], [chatbot, faithfulness, relevancy, correctness, cp_score, sources_box, rewritten_query_box, msg])
+    upload_btn.click(upload_pdf, inputs=pdf_upload, outputs=upload_status)
 demo.launch()
