@@ -4,10 +4,10 @@ import config
 
 cross_encoder = CrossEncoder(model_name_or_path = config.CROSSENCODER_MODEL)
 
-def retrieve(query, vectorstore, bm25_retriever):
+def retrieve(query, vectorstore, bm25_retriever, cosine_weight = config.COSINE_WEIGHT, bm25_weight = config.BM25_WEIGHT):
 
     hybrid_retriever = EnsembleRetriever(
-        retrievers=[vectorstore.as_retriever(search_kwargs={"k": config.CROSSENCODER_KIN}), bm25_retriever], weights=[config.COSINE_WEIGHT, config.BM25_WEIGHT])
+        retrievers=[vectorstore.as_retriever(search_kwargs={"k": config.CROSSENCODER_KIN}), bm25_retriever], weights=[cosine_weight, bm25_weight])
     retrieved_chunks = hybrid_retriever.invoke(query)
 
     scores = cross_encoder.predict([(query, chunk.page_content) for chunk in retrieved_chunks])
