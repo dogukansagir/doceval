@@ -2,6 +2,7 @@ import pymupdf as fitz
 from google import genai
 from google.genai import types
 import config
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -22,7 +23,7 @@ def extract_blocks_from_pdf(pdf_path):
         blocks = page.get_text("blocks", flags=flags)
         for block in blocks:
             if block[6] == 0:  # Text block
-                output.append({"type": "text", "content": block[4]})
+                output.append({"page": page.number, "blocks": {"type": "text", "content": block[4]}})
 
         for img in page.get_images(full=True):
             xref = img[0]
@@ -36,16 +37,16 @@ def extract_blocks_from_pdf(pdf_path):
             if area < 10000 or aspect_ratio > 5:
                 continue
 
-            output.append({"type": "image", "content": base_image["image"], "ext": base_image["ext"]})
+            output.append({"page": page.number, "blocks": {"type": "image", "content": base_image["image"], "ext": base_image["ext"]}})
 
     return output
 
 def enrich_blocks(blocks):
     for block in blocks:
-        if block["type"] == "image":
-            block["content"] = call_vlm_model(block)
+        if block["blocks"]["type"] == "image":
+            block["blocks"]["content"] = call_vlm_model(block["blocks"])
             time.sleep(4) # to avoid rate limits (15 requests per minute)
-            block["type"] = "text"
+            block["blocks"]["type"] = "text"
     return blocks
 
 def call_vlm_model(block):
@@ -61,22 +62,34 @@ def call_vlm_model(block):
     )
     return response.text
 
-def chunk_and_store(blocks):
-    text = ""
-    for block in blocks:
-        text += block["content"]
+def chunk_and_store(blocks, pdf_name):
+    all_documents = []
+    all_chunks_text = []
+    
+    for page_num in set([block["page"] for block in blocks]):
+        page_text = ""
+        for block in blocks:
+            if block["page"] == page_num:
+                page_text += block["blocks"]["content"]
 
-    chunks = text_splitter.split_text(text)
-    print(f"Total Chunks: {len(chunks)}")
+        chunks = text_splitter.split_text(page_text)
+        for chunk in chunks:
+            all_documents.append(Document(
+                page_content=chunk,
+                metadata={"source": pdf_name, "page": page_num + 1}
+            ))
+            all_chunks_text.append(chunk)
+
+    print(f"Total Chunks: {len(all_documents)}")
 
     persist_dir = "./chroma_db"
     
     if os.path.exists(persist_dir):
         vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings, collection_name="doceval")
-        vectorstore.add_texts(chunks)
+        vectorstore.add_documents(all_documents)
     else:
-        vectorstore = Chroma.from_texts(
-            texts=chunks,
+        vectorstore = Chroma.from_documents(
+            documents=all_documents,
             embedding=embeddings,
             persist_directory=persist_dir,
             collection_name="doceval"
@@ -86,11 +99,11 @@ def chunk_and_store(blocks):
     if os.path.exists(bm25_file_name):
         with open(bm25_file_name, "r") as f:
             bm25_corpus = json.load(f)
-        bm25_corpus += chunks
+        bm25_corpus += all_chunks_text
         with open(bm25_file_name, "w") as f:
             json.dump(bm25_corpus, f)
     else:
-        bm25_corpus = chunks
+        bm25_corpus = all_chunks_text
         with open(bm25_file_name, "w") as f:
             json.dump(bm25_corpus, f)
             
@@ -112,7 +125,7 @@ def ingest_pdf(pdf_folder = "./pdfs"):
             pdf_path = os.path.join(pdf_folder, pdf)
             blocks = extract_blocks_from_pdf(pdf_path)
             enriched_blocks = enrich_blocks(blocks)
-            vectorstore, bm25_retriever = chunk_and_store(enriched_blocks)
+            vectorstore, bm25_retriever = chunk_and_store(enriched_blocks,pdf)
             ingested_files.append(pdf)
             with open("ingested_files.json", "w") as f:
                 json.dump(ingested_files, f)
