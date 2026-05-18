@@ -4,3 +4,5 @@ __pycache__/
 chroma_db/
 pdfs/
 doceval-project/
+test.ipynb
+extracted_images/
