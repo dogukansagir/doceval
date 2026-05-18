@@ -1,0 +1,23 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+CROSSENCODER_KIN = 30
+CROSSENCODER_KOUT = 5
+CROSSENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+SENTENCETRANSFORMER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEEPSEEK_FAST_MODEL = "deepseek-v4-flash"
+DEEPSEEK_GOOD_MODEL = "deepseek-v4-pro"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEEPSEEK_API_URL = "https://api.deepseek.com"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+BM25_WEIGHT = 0.4
+COSINE_WEIGHT = 0.6
+RETRY_COUNT = 10
+CHUNK_SIZE = 512
+CHUNK_OVERLAP = 64
+FAITHFULNESS_THRESHOLD = 0.7
+CONTEXT_PRECISION_THRESHOLD = 0.7
+ANSWER_RELEVANCY_THRESHOLD = 0.7
+ANSWER_CORRECTNESS_THRESHOLD = 0.7
