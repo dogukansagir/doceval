@@ -35,7 +35,7 @@ def extract_blocks_from_pdf(pdf_path):
 
             if area < 10000 or aspect_ratio > 5:
                 continue
-            
+
             output.append({"type": "image", "content": base_image["image"], "ext": base_image["ext"]})
 
     return output
@@ -101,11 +101,21 @@ def chunk_and_store(blocks):
 
 def ingest_pdf(pdf_folder = "./pdfs"):
     vectorstore, bm25_retriever = None, None
+    
+    if os.path.exists("ingested_files.json"):
+        with open("ingested_files.json", "r") as f:
+            ingested_files = json.load(f)
+    else:
+        ingested_files = []
+        
     for pdf in os.listdir(pdf_folder):
-        if pdf.endswith(".pdf"):
+        if pdf.endswith(".pdf") and pdf not in ingested_files:
             pdf_path = os.path.join(pdf_folder, pdf)
             blocks = extract_blocks_from_pdf(pdf_path)
             enriched_blocks = enrich_blocks(blocks)
             vectorstore, bm25_retriever = chunk_and_store(enriched_blocks)
+            ingested_files.append(pdf)
+            with open("ingested_files.json", "w") as f:
+                json.dump(ingested_files, f)
 
     return vectorstore, bm25_retriever
