@@ -1,5 +1,5 @@
 CONTEXT_PRECISION_PROMPT = """
-You are a judge. You will evaluate the quality of the input with respect to these metrics.
+You are a judge. You will evaluate the quality of the input with respect to this metric.
 
 Context Precision (Metric)
 Context Precision measures if the retrieved sources are relevant to the query. 
