@@ -49,7 +49,7 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False, chat_history =
     answer_retry_count = 0
     # Rewriting the question in order to make it history-agnostic and more suitable for retrieval.
     query_rewriting_prompt = ChatPromptTemplate.from_messages([
-    ("system", f"{prompts.QUERY_REWRITING_PROMPT}"),
+    ("system", f"{prompts.QUERY_REWRITE_PROMPT}"),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "Question: {question}")
     ])
