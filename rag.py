@@ -14,4 +14,5 @@ def retrieve(query, vectorstore, bm25_retriever):
     scored_chunks = list(zip(retrieved_chunks, scores))
     scored_chunks.sort(key=lambda x: x[1], reverse=True)
     top_chunks = [chunk for chunk, score in scored_chunks[:config.CROSSENCODER_KOUT]]
+    
     return top_chunks
