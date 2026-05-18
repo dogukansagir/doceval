@@ -42,11 +42,23 @@ def compare_scores_with_threshold(scores: dict):
     
     return result_dict
 
-def evaluate(query, vectorstore, bm25_retriever, verbose = False):
+def evaluate(query, vectorstore, bm25_retriever, verbose = False, chat_history = None):
+    if chat_history is None:
+        chat_history = []
     cp_retry_count = 0
     answer_retry_count = 0
+    # Rewriting the question in order to make it history-agnostic and more suitable for retrieval.
+    query_rewriting_prompt = ChatPromptTemplate.from_messages([
+    ("system", f"{prompts.QUERY_REWRITING_PROMPT}"),
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "Question: {question}")
+    ])
 
-    retrieved_chunks = retrieve(query, vectorstore, bm25_retriever)
+    chain = query_rewriting_prompt | main_llm | StrOutputParser()
+    rewritten_query = chain.invoke({"question": query, "chat_history": chat_history}).strip()
+
+    # RETRIEVAL PART STARTS HERE
+    retrieved_chunks = retrieve(rewritten_query, vectorstore, bm25_retriever)
     retrieved_texts = [chunk.page_content for chunk in retrieved_chunks]
 
     judge_context_precision_prompt = ChatPromptTemplate.from_messages([
@@ -56,7 +68,7 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
     
     chain = judge_context_precision_prompt | judge_llm | StrOutputParser()
 
-    context_precision_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts)})
+    context_precision_output = chain.invoke({"question": rewritten_query, "retrieved_chunks": "\n".join(retrieved_texts)})
     context_precision_score = parse_output(context_precision_output)["Context Precision"]
 
     if verbose:
@@ -68,10 +80,10 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
     while context_precision_score < config.CONTEXT_PRECISION_THRESHOLD and cp_retry_count < config.CONTEXT_PRECISION_RETRY_COUNT:
         # Re-retrieve chunks with different search weights
         cp_retry_count += 1
-        retrieved_chunks = retrieve(query, vectorstore, bm25_retriever, cosine_weight = min(1.0, config.COSINE_WEIGHT + 0.1*cp_retry_count), bm25_weight = max(0.0, config.BM25_WEIGHT - 0.1*cp_retry_count))
+        retrieved_chunks = retrieve(rewritten_query, vectorstore, bm25_retriever, cosine_weight = min(1.0, config.COSINE_WEIGHT + 0.1*cp_retry_count), bm25_weight = max(0.0, config.BM25_WEIGHT - 0.1*cp_retry_count))
         retrieved_texts = [chunk.page_content for chunk in retrieved_chunks]
 
-        context_precision_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts)})
+        context_precision_output = chain.invoke({"question": rewritten_query, "retrieved_chunks": "\n".join(retrieved_texts)})
         context_precision_score = parse_output(context_precision_output)["Context Precision"]
 
         if verbose:
@@ -83,14 +95,16 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
     
     retrieved_texts = best_retrieved_chunks
     context_precision_score = best_context_precision_score
+    # RETRIEVAL PART ENDS HERE
 
     main_llm_prompt = ChatPromptTemplate.from_messages([
     ("system", f"{prompts.MAIN_LLM_PROMPT}"),
+    MessagesPlaceholder(variable_name="chat_history"),
     ("human", "Question: {question}\nRetrieved Chunks: {retrieved_chunks}")
     ])
 
     chain = main_llm_prompt | main_llm | StrOutputParser()
-    answer = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts)})
+    answer = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts), "chat_history": chat_history})
 
     judge_post_answer_prompt = ChatPromptTemplate.from_messages([
     ("system", f"{prompts.POST_ANSWER_JUDGE_PROMPT}"),
@@ -98,7 +112,7 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
     ])
 
     chain = judge_post_answer_prompt | judge_llm | StrOutputParser()
-    post_answer_judge_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts), "answer": answer})
+    post_answer_judge_output = chain.invoke({"question": rewritten_query, "retrieved_chunks": "\n".join(retrieved_texts), "answer": answer})
     post_answer_scores = parse_output(post_answer_judge_output)
     
     if verbose:
@@ -125,11 +139,12 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
 
         main_llm_prompt = ChatPromptTemplate.from_messages([
         ("system", f"{prompts.MAIN_LLM_PROMPT + ' '.join(to_be_added_prompts)}"),
+        MessagesPlaceholder(variable_name="chat_history"),
         ("human", "Question: {question}\nRetrieved Chunks: {retrieved_chunks}")
         ])
         
         chain = main_llm_prompt | main_llm | StrOutputParser()
-        answer = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts)})
+        answer = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts), "chat_history": chat_history})
 
         judge_post_answer_prompt = ChatPromptTemplate.from_messages([
         ("system", f"{prompts.POST_ANSWER_JUDGE_PROMPT}"),
@@ -137,7 +152,7 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
         ])
 
         chain = judge_post_answer_prompt | judge_llm | StrOutputParser()
-        post_answer_judge_output = chain.invoke({"question": query, "retrieved_chunks": "\n".join(retrieved_texts), "answer": answer})
+        post_answer_judge_output = chain.invoke({"question": rewritten_query, "retrieved_chunks": "\n".join(retrieved_texts), "answer": answer})
         post_answer_scores = parse_output(post_answer_judge_output)
 
         if verbose:
@@ -154,4 +169,6 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False):
 
         status = compare_scores_with_threshold(post_answer_scores)
 
-    return best_answer, best_metric_scores, context_precision_score
+    chat_history.append(HumanMessage(content=query))
+    chat_history.append(AIMessage(content=best_answer))
+    return best_answer, best_metric_scores, context_precision_score, chat_history
