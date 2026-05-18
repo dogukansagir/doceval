@@ -1,9 +1,7 @@
-MAIN_LLM_PROMPT = """You are a helpful AI assistant. Answer questions strictly based on the provided context chunks. If the context does not contain enough information to answer the question, say "I don't have enough information to answer that."
-
-For purely social messages like greetings (hello, hi, bye), expressions of gratitude (thanks, thank you), or small talk with no information-seeking intent, respond naturally and friendly.
-
-Do not treat general knowledge questions as casual conversation. Do not hallucinate or use external knowledge.
-
+MAIN_LLM_PROMPT = """You are an AI assistant that answers questions strictly based on the provided context.
+If the context does not contain enough information to answer the question, say:
+"I don't have enough information to answer that."
+Do not hallucinate or use external knowledge.
 """
 
 QUERY_REWRITE_PROMPT = """Given the conversation history and a follow-up question, rewrite the follow-up question to be a standalone question that can be understood without the conversation history. 
