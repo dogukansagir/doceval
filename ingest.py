@@ -8,6 +8,7 @@ from langchain_chroma import Chroma
 from langchain_community.retrievers import BM25Retriever
 import os
 import json
+import time
 
 client = genai.Client(api_key=config.GEMINI_API_KEY)
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
@@ -26,6 +27,15 @@ def extract_blocks_from_pdf(pdf_path):
         for img in page.get_images(full=True):
             xref = img[0]
             base_image = doc.extract_image(xref)
+
+            width = base_image["width"]
+            height = base_image["height"]
+            area = width * height
+            aspect_ratio = max(width, height) / min(width, height)
+
+            if area < 10000 or aspect_ratio > 5:
+                continue
+            
             output.append({"type": "image", "content": base_image["image"], "ext": base_image["ext"]})
 
     return output
@@ -33,8 +43,8 @@ def extract_blocks_from_pdf(pdf_path):
 def enrich_blocks(blocks):
     for block in blocks:
         if block["type"] == "image":
-            # call vlm model to get the description of the image and add it to the block
             block["content"] = call_vlm_model(block)
+            time.sleep(4) # to avoid rate limits (15 requests per minute)
             block["type"] = "text"
     return blocks
 
@@ -49,7 +59,7 @@ def call_vlm_model(block):
       'Extract all data, values, labels and relationships visible in the image. Analyze the data and give me a string about your analysis. you will create strings that are going inside a RAG system. do not omit any information. describe the type and structure of the visual content (table, chart, diagram, figure) before describing its contents.'
         ],
     )
-
+    print(response.text)
     return response.text
 
 def chunk_and_store(blocks):
