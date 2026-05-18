@@ -2,8 +2,16 @@ import pymupdf as fitz
 from google import genai
 from google.genai import types
 import config
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_community.retrievers import BM25Retriever
+import os
+import json
 
 client = genai.Client(api_key=config.GEMINI_API_KEY)
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
+embeddings = HuggingFaceEmbeddings(model_name=config.SENTENCETRANSFORMER_MODEL)
 
 def extract_blocks_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
@@ -43,3 +51,51 @@ def call_vlm_model(block):
     )
 
     return response.text
+
+def chunk_and_store(blocks):
+    text = ""
+    for block in blocks:
+        text += block["content"]
+
+    chunks = text_splitter.split_text(text)
+    print(f"Total Chunks: {len(chunks)}")
+
+    persist_dir = "./chroma_db"
+    
+    if os.path.exists(persist_dir):
+        vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings, collection_name="doceval")
+        vectorstore.add_texts(chunks)
+    else:
+        vectorstore = Chroma.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            persist_directory=persist_dir,
+            collection_name="doceval"
+        )
+
+    bm25_file_name = "bm25_corpus.json"
+    if os.path.exists(bm25_file_name):
+        with open(bm25_file_name, "r") as f:
+            bm25_corpus = json.load(f)
+        bm25_corpus += chunks
+        with open(bm25_file_name, "w") as f:
+            json.dump(bm25_corpus, f)
+    else:
+        bm25_corpus = chunks
+        with open(bm25_file_name, "w") as f:
+            json.dump(bm25_corpus, f)
+            
+    bm25_retriever = BM25Retriever.from_texts(bm25_corpus, k=config.CROSSENCODER_KIN)
+
+    return vectorstore, bm25_retriever
+
+def ingest_pdf(pdf_folder = "./pdfs"):
+    vectorstore, bm25_retriever = None, None
+    for pdf in os.listdir(pdf_folder):
+        if pdf.endswith(".pdf"):
+            pdf_path = os.path.join(pdf_folder, pdf)
+            blocks = extract_blocks_from_pdf(pdf_path)
+            enriched_blocks = enrich_blocks(blocks)
+            vectorstore, bm25_retriever = chunk_and_store(enriched_blocks)
+
+    return vectorstore, bm25_retriever
