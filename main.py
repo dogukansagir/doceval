@@ -1,9 +1,11 @@
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from langchain_core.messages import HumanMessage, AIMessage
 from eval import evaluate
 from ingest import ingest_pdf
+from gradio_ui import create_demo
+import gradio as gr
 
 state = {}
 
@@ -49,6 +51,8 @@ class Response(BaseModel):
     chat_history: list[dict]
 
 app = FastAPI(lifespan=lifespan)
+demo = create_demo(state)
+app = gr.mount_gradio_app(app, demo, path="/ui")
 
 @app.post("/evaluate")
 def run_evaluation(request: QueryRequest) -> Response:
