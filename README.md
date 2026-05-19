@@ -1,5 +1,7 @@
 # DocEval RAG — Retrieval-Augmented Generation with Self-Evaluation
 
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+
 A production-oriented RAG pipeline that ingests PDFs (including PDFs with images), answers questions using a hybrid retrieval strategy, and continuously self-evaluates and retries to improve answer quality before returning a response.
 
 ---
