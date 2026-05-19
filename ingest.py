@@ -15,6 +15,18 @@ client = genai.Client(api_key=config.GEMINI_API_KEY)
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
 embeddings = HuggingFaceEmbeddings(model_name=config.SENTENCETRANSFORMER_MODEL)
 
+def doc_to_dict(document):
+    return {
+        "page_content": document.page_content,
+        "metadata": document.metadata
+    }
+
+def dict_to_doc(dictionary):
+    return Document(
+        page_content=dictionary["page_content"],
+        metadata=dictionary["metadata"]
+    )
+
 def extract_blocks_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
     output = []
@@ -64,7 +76,6 @@ def call_vlm_model(block):
 
 def chunk_and_store(blocks, pdf_name):
     all_documents = []
-    all_chunks_text = []
     
     for page_num in set([block["page"] for block in blocks]):
         page_text = ""
@@ -78,7 +89,6 @@ def chunk_and_store(blocks, pdf_name):
                 page_content=chunk,
                 metadata={"source": pdf_name, "page": page_num + 1}
             ))
-            all_chunks_text.append(chunk)
 
     print(f"Total Chunks: {len(all_documents)}")
 
@@ -99,15 +109,16 @@ def chunk_and_store(blocks, pdf_name):
     if os.path.exists(bm25_file_name):
         with open(bm25_file_name, "r") as f:
             bm25_corpus = json.load(f)
-        bm25_corpus += all_chunks_text
+            bm25_corpus.extend([doc_to_dict(doc) for doc in all_documents])
         with open(bm25_file_name, "w") as f:
             json.dump(bm25_corpus, f)
     else:
-        bm25_corpus = all_chunks_text
+        bm25_corpus = [doc_to_dict(doc) for doc in all_documents]
         with open(bm25_file_name, "w") as f:
             json.dump(bm25_corpus, f)
-            
-    bm25_retriever = BM25Retriever.from_texts(bm25_corpus, k=config.CROSSENCODER_KIN)
+    
+    bm25_corpus = [dict_to_doc(doc) for doc in bm25_corpus]
+    bm25_retriever = BM25Retriever.from_documents(bm25_corpus, k=config.CROSSENCODER_KIN)
 
     return vectorstore, bm25_retriever
 
@@ -134,6 +145,8 @@ def ingest_pdf(pdf_folder = "./pdfs"):
         vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings, collection_name="doceval")
         with open("bm25_corpus.json", "r") as f:
             bm25_corpus = json.load(f)
-        bm25_retriever = BM25Retriever.from_texts(bm25_corpus, k=config.CROSSENCODER_KIN)
+        
+        bm25_corpus = [dict_to_doc(doc) for doc in bm25_corpus]
+        bm25_retriever = BM25Retriever.from_documents(bm25_corpus, k=config.CROSSENCODER_KIN)
 
     return vectorstore, bm25_retriever
