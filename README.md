@@ -165,6 +165,9 @@ You can upload PDFs directly through the Gradio UI using the **Upload PDF** pane
 - The Gemini VLM call includes a 4-second sleep between image requests to stay within the free-tier rate limit (15 RPM). Adjust or remove this in `ingest.py` if you are on a higher quota.
 - `ingested_files.json` prevents re-ingesting the same PDF on restart. Delete it (along with `chroma_db/` and `bm25_corpus.json`) to do a full re-ingest from scratch.
 - `Answer Correctness` cannot be evaluated without an external ground truth, so the judge returns `Unavailable` when the retrieved context is insufficient to verify correctness. This does not count as a FAIL.
+- The evaluation uses a two-tier judge strategy: the first evaluation pass uses `deepseek-v4-flash` for speed (~5s). 
+  If the answer fails and enters the retry loop, `deepseek-v4-pro` takes over as the judge for higher reliability. 
+  This keeps the happy path fast while ensuring retries are evaluated with maximum accuracy.
 
 ## License
 
