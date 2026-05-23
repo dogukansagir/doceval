@@ -31,8 +31,8 @@ Hybrid Retrieval (BM25 + Chroma)
       │
       ▼
 Context Precision Check ──── below threshold? ──► Re-retrieve (adjusted weights) ──┐
-      │                                                                              │
-      └──────────────────────────────────────────────────────────────────────────────┘
+      │                                                                            │
+      └────────────────────────────────────────────────────────────────────────────┘
       │  (best context selected)
       ▼
 Answer Generation (DeepSeek)
