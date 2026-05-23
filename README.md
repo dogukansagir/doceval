@@ -2,7 +2,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-A production-oriented RAG pipeline that ingests PDFs (including PDFs with images), answers questions using a hybrid retrieval strategy, and continuously self-evaluates and retries to improve answer quality before returning a response.
+A production-oriented RAG pipeline that ingests PDFs (including PDFs with images), answers questions using a hybrid retrieval strategy, and continuously self-evaluates and retries to improve answer quality before returning a response. Exposes both a Gradio chat UI and a FastAPI REST endpoint, sharing the same underlying pipeline.
 
 ---
 
@@ -14,6 +14,7 @@ A production-oriented RAG pipeline that ingests PDFs (including PDFs with images
 - **Query rewriting** — rewrites follow-up questions into standalone queries using conversation history
 - **Self-evaluation loop** — scores each answer on Faithfulness, Answer Relevancy, Answer Correctness, and Context Precision, then retries with targeted feedback if any metric falls below its threshold
 - **Gradio UI** — a browser-based chat interface with visible evaluation scores, sources, and the rewritten query
+- **FastAPI REST API** — a `POST /evaluate` endpoint for programmatic access with full multi-turn chat history support
 
 ---
 
@@ -44,23 +45,41 @@ Post-Answer Evaluation (Faithfulness / Relevancy / Correctness)
       └── any FAIL? ──► Retry with targeted feedback prompt ──► Re-evaluate ──► Return best Answer
 ```
 
+### Service Layer
+
+```
+FastAPI (uvicorn main:app)
+├── POST /evaluate   ← REST API for programmatic access
+├── /ui              ← Gradio chat interface (mounted)
+└── /docs            ← Auto-generated API docs
+
+            OR
+
+Gradio only (python app.py)
+└── http://localhost:7860
+```
+
+Both entry points share the same `vectorstore` and `bm25_retriever` loaded once at startup via a shared `state` dict. Uploading a PDF through the Gradio UI updates `state` instantly, making the new document available to the API endpoint immediately.
+
 ---
 
 ## Project Structure
 
 ```
 .
-├── app.py          # Gradio UI and entry point
-├── config.py       # All configurable parameters and API keys
-├── eval.py         # Query rewriting, retrieval orchestration, answer generation, evaluation loop
-├── ingest.py       # PDF parsing, VLM image enrichment, chunking, vector store and BM25 storage
-├── prompts.py      # All LLM system prompts
-├── rag.py          # Hybrid retriever and cross-encoder reranker
+├── app.py           # Standalone Gradio entry point
+├── main.py          # FastAPI entry point with Gradio mounted at /ui
+├── gradio_ui.py     # Shared Gradio UI definition (used by both entry points)
+├── config.py        # All configurable parameters and API keys
+├── eval.py          # Query rewriting, retrieval orchestration, answer generation, evaluation loop
+├── ingest.py        # PDF parsing, VLM image enrichment, chunking, vector store and BM25 storage
+├── prompts.py       # All LLM system prompts
+├── rag.py           # Hybrid retriever and cross-encoder reranker
 ├── requirements.txt
-├── pdfs/           # Place your PDF files here before running
-├── chroma_db/      # Auto-created; persisted vector store
-├── bm25_corpus.json        # Auto-created; BM25 text corpus
-└── ingested_files.json     # Auto-created; tracks already-ingested PDFs
+├── pdfs/            # Place your PDF files here before running
+├── chroma_db/       # Auto-created; persisted vector store
+├── bm25_corpus.json          # Auto-created; BM25 corpus with metadata
+└── ingested_files.json       # Auto-created; tracks already-ingested PDFs
 ```
 
 ---
@@ -91,7 +110,7 @@ GEMINI_API_KEY=your_gemini_api_key
 
 ### 4. Add PDFs
 
-Create a `pdfs/` folder and place your PDF files in the `pdfs/` directory:
+Create a `pdfs/` folder and place your PDF files in it:
 
 ```bash
 mkdir pdfs
@@ -100,11 +119,63 @@ cp your_document.pdf pdfs/
 
 ### 5. Run the app
 
+**Gradio UI only:**
 ```bash
 python app.py
 ```
+Available at `http://localhost:7860`
 
-The Gradio interface will be available at `http://localhost:7860` by default.
+**FastAPI + Gradio (recommended):**
+```bash
+uvicorn main:app --reload
+```
+
+| Path | Description |
+|---|---|
+| `http://localhost:8000/ui` | Gradio chat interface |
+| `http://localhost:8000/evaluate` | REST API endpoint |
+| `http://localhost:8000/docs` | Auto-generated API docs |
+
+---
+
+## REST API
+
+### `POST /evaluate`
+
+**Request body:**
+```json
+{
+  "query": "What is the faithfulness metric?",
+  "chat_history": []
+}
+```
+
+**Response:**
+```json
+{
+  "answer": "Faithfulness measures whether...",
+  "scores": {
+    "Faithfulness": 0.95,
+    "Answer Relevancy": 0.90,
+    "Answer Correctness": 0.85
+  },
+  "context_precision_score": 0.88,
+  "rewritten_query": "What is the faithfulness metric?",
+  "sources": [
+    {
+      "content": "chunk text...",
+      "source": "paper.pdf",
+      "page": 3
+    }
+  ],
+  "chat_history": [
+    {"role": "user", "content": "What is the faithfulness metric?"},
+    {"role": "assistant", "content": "Faithfulness measures whether..."}
+  ]
+}
+```
+
+Multi-turn conversations are supported by passing the `chat_history` returned from each response back into the next request.
 
 ---
 
@@ -151,14 +222,15 @@ Each response is scored by a judge LLM on four metrics:
 - **Answer Correctness** — Is the answer factually correct? Scored as `Unavailable` when ground truth is not available.
 - **Context Precision** — Are the retrieved chunks relevant to the question? Evaluated before answer generation; triggers re-retrieval with adjusted BM25/cosine weights if below threshold.
 
-When an answer fails on any metric, the system retries with a targeted system prompt indicating which metric failed. 
-if the scores are still under the threshold after generating an answer `RETRY_COUNT` times, the best-scoring answer across all attempts is returned.
+When an answer fails on any metric, the system retries with a targeted system prompt indicating which metric failed. If the scores are still under the threshold after `RETRY_COUNT` attempts, the best-scoring answer across all attempts is returned.
+
+The evaluation uses a two-tier judge strategy: the first pass uses `deepseek-v4-flash` for speed. If the answer fails and enters the retry loop, `deepseek-v4-pro` takes over as the judge for higher reliability. This keeps the happy path fast while ensuring retries are evaluated with maximum accuracy.
 
 ---
 
 ## Adding New PDFs at Runtime
 
-You can upload PDFs directly through the Gradio UI using the **Upload PDF** panel. The file will be saved to `pdfs/`, ingested, and added to the existing vector store and BM25 corpus without reprocessing previously ingested files.
+You can upload PDFs directly through the Gradio UI using the **Upload PDF** panel. The file will be saved to `pdfs/`, ingested, and added to the existing vector store and BM25 corpus without reprocessing previously ingested files. When running via `uvicorn main:app`, the updated retrievers are instantly available to the API endpoint as well.
 
 ---
 
@@ -167,9 +239,8 @@ You can upload PDFs directly through the Gradio UI using the **Upload PDF** pane
 - The Gemini VLM call includes a 4-second sleep between image requests to stay within the free-tier rate limit (15 RPM). Adjust or remove this in `ingest.py` if you are on a higher quota.
 - `ingested_files.json` prevents re-ingesting the same PDF on restart. Delete it (along with `chroma_db/` and `bm25_corpus.json`) to do a full re-ingest from scratch.
 - `Answer Correctness` cannot be evaluated without an external ground truth, so the judge returns `Unavailable` when the retrieved context is insufficient to verify correctness. This does not count as a FAIL.
-- The evaluation uses a two-tier judge strategy: the first evaluation pass uses `deepseek-v4-flash` for speed (~5s). 
-  If the answer fails and enters the retry loop, `deepseek-v4-pro` takes over as the judge for higher reliability. 
-  This keeps the happy path fast while ensuring retries are evaluated with maximum accuracy.
+
+---
 
 ## License
 
