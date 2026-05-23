@@ -45,7 +45,7 @@ class QueryRequest(BaseModel):
 class Response(BaseModel):
     answer: str
     scores: dict
-    context_precision_score: float | str
+    context_precision_score: float
     rewritten_query: str
     sources: list[dict]
     chat_history: list[dict]

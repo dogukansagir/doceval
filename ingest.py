@@ -5,15 +5,13 @@ import config
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 from langchain_community.retrievers import BM25Retriever
-from qdrant_client import QdrantClient
-from langchain_qdrant import QdrantVectorStore
 import os
 import json
 import time
 
 client = genai.Client(api_key=config.GEMINI_API_KEY)
-rag_client = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY)
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
 embeddings = HuggingFaceEmbeddings(model_name=config.SENTENCETRANSFORMER_MODEL)
 
@@ -93,9 +91,19 @@ def chunk_and_store(blocks, pdf_name):
             ))
 
     print(f"Total Chunks: {len(all_documents)}")
+
+    persist_dir = "./chroma_db"
     
-    vectorstore = QdrantVectorStore(client=rag_client, collection_name="doceval", embedding=embeddings)
-    vectorstore.add_documents(all_documents)
+    if os.path.exists(persist_dir):
+        vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings, collection_name="doceval")
+        vectorstore.add_documents(all_documents)
+    else:
+        vectorstore = Chroma.from_documents(
+            documents=all_documents,
+            embedding=embeddings,
+            persist_directory=persist_dir,
+            collection_name="doceval"
+        )
 
     bm25_file_name = "bm25_corpus.json"
     if os.path.exists(bm25_file_name):
@@ -134,7 +142,7 @@ def ingest_pdf(pdf_folder = "./pdfs"):
                 json.dump(ingested_files, f)
     
     if vectorstore == None and bm25_retriever == None:
-        vectorstore = QdrantVectorStore(client=rag_client, collection_name="doceval", embedding=embeddings)
+        vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings, collection_name="doceval")
         with open("bm25_corpus.json", "r") as f:
             bm25_corpus = json.load(f)
         
