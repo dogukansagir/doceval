@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from langchain_core.messages import HumanMessage, AIMessage
@@ -81,10 +81,9 @@ def run_evaluation(request: QueryRequest) -> Response:
     )
 
 @app.post("/ingest")
-def run_ingest():
-    rag_client = ingest_pdf()
-    state["rag_client"] = rag_client
-    return {"status": "ingestion complete"}
+def run_ingest(background_tasks: BackgroundTasks):
+    background_tasks.add_task(ingest_pdf)
+    return {"status": "ingestion started — check CloudWatch logs for progress"}
 
 @app.post("/reset")
 def reset():
