@@ -96,3 +96,7 @@ def reset():
     )
     s3_client.delete_object(Bucket=config.S3_BUCKET_NAME, Key="ingested_files.json")
     return {"status": "reset complete"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
