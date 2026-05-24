@@ -1,7 +1,6 @@
 import gradio as gr
 from langchain_core.messages import HumanMessage, AIMessage
 import os
-import shutil
 from ingest import ingest_pdf, s3_client
 from eval import evaluate
 import config
@@ -18,18 +17,19 @@ def create_demo(state):
 
         return langchain_history
 
-    def upload_pdf(file):
-        if file is None:
-            return "No file uploaded."
+    def upload_pdf(files):
+        if files is None:
+            return "No files uploaded."
         
-        filename = os.path.basename(file)
-        s3_client.upload_file(file, config.S3_BUCKET_NAME, f"pdfs/{filename}")
+        for file in files:
+            filename = os.path.basename(file)
+            s3_client.upload_file(file, config.S3_BUCKET_NAME, f"pdfs/{filename}")
 
         # Ingest the new PDF and update the RAG Database
         rag_client = ingest_pdf()
         state["rag_client"] = rag_client
 
-        return f"File '{filename}' uploaded and ingested successfully."
+        return f"{len(files)} file(s) uploaded and ingested successfully."
 
     def chat(message, history):
         rag_client = state["rag_client"]
@@ -60,7 +60,7 @@ def create_demo(state):
             correctness = gr.Textbox(label="Answer Correctness")
             cp_score = gr.Textbox(label="Context Precision")
         with gr.Row():
-            pdf_upload = gr.File(label="Upload PDF", file_types=[".pdf"])
+            pdf_upload = gr.File(label="Upload PDF", file_types=[".pdf"], file_count="multiple")
             upload_btn = gr.Button("Upload and Ingest")
             upload_status = gr.Textbox(label="Upload Status", interactive=False)
 
