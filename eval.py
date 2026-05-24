@@ -55,7 +55,7 @@ def compare_scores_with_threshold(scores: dict):
     
     return result_dict
 
-def evaluate(query, rag_client, verbose = False, chat_history = None):
+def evaluate(query, rag_client, verbose = True, chat_history = None):
     if chat_history is None:
         chat_history = []
     cp_retry_count = 0
