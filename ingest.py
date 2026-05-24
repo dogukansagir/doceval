@@ -4,15 +4,18 @@ from google.genai import types
 import config
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from botocore.exceptions import ClientError
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, models
 from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
 from uuid import uuid4
+import boto3
 import os
 import json
 import time
 
 client = genai.Client(api_key=config.GEMINI_API_KEY)
+s3_client = boto3.client('s3', region_name=config.AWS_REGION)
 rag_client = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, cloud_inference=True)
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
 
@@ -122,21 +125,30 @@ def chunk_and_store(blocks, pdf_name):
     )
     return rag_client
 
-def ingest_pdf(pdf_folder = "./pdfs"):
-    if os.path.exists("ingested_files.json"):
-        with open("ingested_files.json", "r") as f:
+def ingest_pdf(pdf_folder="/tmp/pdfs/"):
+    os.makedirs(pdf_folder, exist_ok=True)
+    try:
+        s3_client.head_object(Bucket=config.S3_BUCKET_NAME, Key="ingested_files.json")
+        s3_client.download_file(config.S3_BUCKET_NAME, "ingested_files.json", "/tmp/ingested_files.json")
+        with open("/tmp/ingested_files.json", "r") as f:
             ingested_files = json.load(f)
-    else:
+    except ClientError:
         ingested_files = []
-        
-    for pdf in os.listdir(pdf_folder):
-        if pdf.endswith(".pdf") and pdf not in ingested_files:
-            pdf_path = os.path.join(pdf_folder, pdf)
+    
+    response = s3_client.list_objects_v2(Bucket=config.S3_BUCKET_NAME, Prefix="pdfs/")
+    for pdf in response.get('Contents', []):
+        filename = os.path.basename(pdf['Key'])
+        if filename.endswith(".pdf") and filename not in ingested_files:
+            s3_client.download_file(config.S3_BUCKET_NAME, pdf['Key'], f"/tmp/pdfs/{filename}")
+            pdf_path = os.path.join(pdf_folder, filename)
             blocks = extract_blocks_from_pdf(pdf_path)
             enriched_blocks = enrich_blocks(blocks)
-            chunk_and_store(enriched_blocks,pdf)
-            ingested_files.append(pdf)
-            with open("ingested_files.json", "w") as f:
-                json.dump(ingested_files, f)
+            chunk_and_store(enriched_blocks,filename)
+            os.remove(f"/tmp/pdfs/{filename}")
+            ingested_files.append(filename)
+
+    with open("/tmp/ingested_files.json", "w") as f:
+        json.dump(ingested_files, f)
+    s3_client.upload_file("/tmp/ingested_files.json", config.S3_BUCKET_NAME, "ingested_files.json")
 
     return rag_client

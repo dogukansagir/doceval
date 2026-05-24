@@ -2,8 +2,9 @@ import gradio as gr
 from langchain_core.messages import HumanMessage, AIMessage
 import os
 import shutil
-from ingest import ingest_pdf
+from ingest import ingest_pdf, s3_client
 from eval import evaluate
+import config
 
 def create_demo(state):
 
@@ -20,10 +21,9 @@ def create_demo(state):
     def upload_pdf(file):
         if file is None:
             return "No file uploaded."
-
+        
         filename = os.path.basename(file)
-        save_path = f"./pdfs/{filename}"
-        shutil.copy(file, save_path)
+        s3_client.upload_file(file, config.S3_BUCKET_NAME, f"pdfs/{filename}")
 
         # Ingest the new PDF and update the RAG Database
         rag_client = ingest_pdf()

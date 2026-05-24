@@ -2,4 +2,8 @@
 .git
 __pycache__
 *.pyc
+pdfs/
+chroma_db/
+bm25_corpus.json
 ingested_files.json
+*.ipynb
