@@ -3,7 +3,8 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from langchain_core.messages import HumanMessage, AIMessage
 from eval import evaluate
-from ingest import ingest_pdf
+from ingest import rag_client, ingest_pdf, vectors_config, sparse_vectors_config, s3_client
+import config
 from gradio_ui import create_demo
 import gradio as gr
 
@@ -31,7 +32,6 @@ def langchain_to_dict(chat_history):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    rag_client = ingest_pdf()
     state["rag_client"] = rag_client
     print("RAG client is ready")
     yield
@@ -80,3 +80,19 @@ def run_evaluation(request: QueryRequest) -> Response:
         chat_history=chat_history  
     )
 
+@app.post("/ingest")
+def run_ingest():
+    rag_client = ingest_pdf()
+    state["rag_client"] = rag_client
+    return {"status": "ingestion complete"}
+
+@app.post("/reset")
+def reset():
+    rag_client.delete_collection(collection_name=config.QDRANT_COLLECTION_NAME)
+    rag_client.create_collection(
+        collection_name=config.QDRANT_COLLECTION_NAME,
+        vectors_config=vectors_config,
+        sparse_vectors_config=sparse_vectors_config
+    )
+    s3_client.delete_object(Bucket=config.S3_BUCKET_NAME, Key="ingested_files.json")
+    return {"status": "reset complete"}
