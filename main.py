@@ -31,10 +31,9 @@ def langchain_to_dict(chat_history):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    vectorstore, bm25_retriever = ingest_pdf()
-    state["vectorstore"] = vectorstore
-    state["bm25_retriever"] = bm25_retriever
-    print("Retrievers are ready")
+    rag_client = ingest_pdf()
+    state["rag_client"] = rag_client
+    print("RAG client is ready")
     yield
     state.clear()
 
@@ -56,14 +55,12 @@ app = gr.mount_gradio_app(app, demo, path="/ui")
 
 @app.post("/evaluate")
 def run_evaluation(request: QueryRequest) -> Response:
-    vectorstore = state["vectorstore"]
-    bm25_retriever = state["bm25_retriever"]
+    rag_client = state["rag_client"]
     chat_history = dict_to_langchain(request.chat_history)
 
     answer, scores, context_precision, retrieved_docs, rewritten_query, chat_history = evaluate(
     query=request.query,
-    vectorstore=vectorstore,
-    bm25_retriever=bm25_retriever,
+    rag_client=rag_client,
     chat_history=chat_history
     )
 

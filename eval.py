@@ -1,8 +1,8 @@
-from rag import retrieve
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
+from rag import retrieve
 import config
 import prompts
 import time
@@ -55,7 +55,7 @@ def compare_scores_with_threshold(scores: dict):
     
     return result_dict
 
-def evaluate(query, vectorstore, bm25_retriever, verbose = False, chat_history = None):
+def evaluate(query, rag_client, verbose = False, chat_history = None):
     if chat_history is None:
         chat_history = []
     cp_retry_count = 0
@@ -76,7 +76,7 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False, chat_history =
         print(f"Query Rewrite: {time.time()-t0:.1f}s")
         print(f"Rewritten Query: {rewritten_query}")
     # RETRIEVAL PART STARTS HERE
-    retrieved_chunks = retrieve(rewritten_query, vectorstore, bm25_retriever)
+    retrieved_chunks = retrieve(rewritten_query, rag_client)
     retrieved_texts = [chunk.page_content for chunk in retrieved_chunks]
     retrieved_docs = retrieved_chunks
 
@@ -106,7 +106,7 @@ def evaluate(query, vectorstore, bm25_retriever, verbose = False, chat_history =
             break
         cp_retry_count += 1
 
-        retrieved_chunks = retrieve(rewritten_query, vectorstore, bm25_retriever, cosine_weight = min(1.0, config.COSINE_WEIGHT + 0.1*cp_retry_count), bm25_weight = max(0.0, config.BM25_WEIGHT - 0.1*cp_retry_count))
+        retrieved_chunks = retrieve(rewritten_query, rag_client, cosine_weight = config.COSINE_WEIGHT + 0.1*cp_retry_count, bm25_weight = max(0.0, config.BM25_WEIGHT - 0.1*cp_retry_count))
         retrieved_texts = [chunk.page_content for chunk in retrieved_chunks]
         retrieved_docs = retrieved_chunks
 

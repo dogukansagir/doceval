@@ -25,18 +25,16 @@ def create_demo(state):
         save_path = f"./pdfs/{filename}"
         shutil.copy(file, save_path)
 
-        # Ingest the new PDF and update the vectorstore and bm25_retriever
-        vectorstore, bm25_retriever = ingest_pdf()
-        state["vectorstore"] = vectorstore
-        state["bm25_retriever"] = bm25_retriever
+        # Ingest the new PDF and update the RAG Database
+        rag_client = ingest_pdf()
+        state["rag_client"] = rag_client
 
         return f"File '{filename}' uploaded and ingested successfully."
 
     def chat(message, history):
-        vectorstore = state["vectorstore"]
-        bm25_retriever = state["bm25_retriever"]
+        rag_client = state["rag_client"]
         langchain_history = parse_gradio_history(history)
-        answer, scores, cp_score, source_docs, rewritten_query, _ = evaluate(message, vectorstore, bm25_retriever, chat_history=langchain_history)
+        answer, scores, cp_score, source_docs, rewritten_query, _ = evaluate(message, rag_client, chat_history=langchain_history)
         history.append({"role": "user", "content": message})
         history.append({"role": "assistant", "content": answer})
 

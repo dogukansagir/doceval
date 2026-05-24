@@ -4,27 +4,36 @@ from google.genai import types
 import config
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain_community.retrievers import BM25Retriever
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, PointStruct, models
+from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
+from uuid import uuid4
 import os
 import json
 import time
 
 client = genai.Client(api_key=config.GEMINI_API_KEY)
+rag_client = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, cloud_inference=True)
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""])
-embeddings = HuggingFaceEmbeddings(model_name=config.SENTENCETRANSFORMER_MODEL)
 
-def doc_to_dict(document):
-    return {
-        "page_content": document.page_content,
-        "metadata": document.metadata
-    }
+vectors_config={"dense": models.VectorParams(size=384, distance=Distance.COSINE),
+                "multi": models.VectorParams(
+                    size=96,
+                    distance=models.Distance.COSINE,
+                    multivector_config=models.MultiVectorConfig(comparator=models.MultiVectorComparator.MAX_SIM),
+                    hnsw_config=models.HnswConfigDiff(m=0))
+                }
+sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)}
 
-def dict_to_doc(dictionary):
-    return Document(
-        page_content=dictionary["page_content"],
-        metadata=dictionary["metadata"]
+dense_embedding_model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+sparse_embedding_model = SparseTextEmbedding(model_name="qdrant/bm25")
+late_interaction_embedding_model = LateInteractionTextEmbedding(model_name="answerdotai/answerai-colbert-small-v1")
+
+if rag_client.collection_exists(collection_name=config.QDRANT_COLLECTION_NAME) == False:
+    rag_client.create_collection(
+        collection_name=config.QDRANT_COLLECTION_NAME,
+        vectors_config=vectors_config,
+        sparse_vectors_config=sparse_vectors_config
     )
 
 def extract_blocks_from_pdf(pdf_path):
@@ -92,39 +101,28 @@ def chunk_and_store(blocks, pdf_name):
 
     print(f"Total Chunks: {len(all_documents)}")
 
-    persist_dir = "./chroma_db"
+    pointlist = []
+    texts = [doc.page_content for doc in all_documents]
+    dense_vectors = list(dense_embedding_model.embed(texts))
+    sparse_vectors = list(sparse_embedding_model.embed(texts))
+    late_vectors = list(late_interaction_embedding_model.embed(texts))
+    for doc, sparse_vec, dense_vec, late_vec in zip(all_documents, sparse_vectors, dense_vectors, late_vectors):
+        sparse_vec = models.SparseVector(indices=sparse_vec.indices.tolist(), values=sparse_vec.values.tolist())
+        pointlist.append(PointStruct(
+            id=str(uuid4()),
+            vector={"dense": dense_vec, "multi": late_vec, "sparse": sparse_vec},
+            payload={"page_content": doc.page_content, **doc.metadata}
+        ))
     
-    if os.path.exists(persist_dir):
-        vectorstore = Chroma(persist_directory=persist_dir, embedding_function=embeddings, collection_name="doceval")
-        vectorstore.add_documents(all_documents)
-    else:
-        vectorstore = Chroma.from_documents(
-            documents=all_documents,
-            embedding=embeddings,
-            persist_directory=persist_dir,
-            collection_name="doceval"
-        )
-
-    bm25_file_name = "bm25_corpus.json"
-    if os.path.exists(bm25_file_name):
-        with open(bm25_file_name, "r") as f:
-            bm25_corpus = json.load(f)
-            bm25_corpus.extend([doc_to_dict(doc) for doc in all_documents])
-        with open(bm25_file_name, "w") as f:
-            json.dump(bm25_corpus, f)
-    else:
-        bm25_corpus = [doc_to_dict(doc) for doc in all_documents]
-        with open(bm25_file_name, "w") as f:
-            json.dump(bm25_corpus, f)
-    
-    bm25_corpus = [dict_to_doc(doc) for doc in bm25_corpus]
-    bm25_retriever = BM25Retriever.from_documents(bm25_corpus, k=config.CROSSENCODER_KIN)
-
-    return vectorstore, bm25_retriever
+    rag_client.upload_points(
+        collection_name=config.QDRANT_COLLECTION_NAME,
+        points=pointlist,
+        batch_size=25,
+        max_retries=3
+    )
+    return rag_client
 
 def ingest_pdf(pdf_folder = "./pdfs"):
-    vectorstore, bm25_retriever = None, None
-
     if os.path.exists("ingested_files.json"):
         with open("ingested_files.json", "r") as f:
             ingested_files = json.load(f)
@@ -136,17 +134,9 @@ def ingest_pdf(pdf_folder = "./pdfs"):
             pdf_path = os.path.join(pdf_folder, pdf)
             blocks = extract_blocks_from_pdf(pdf_path)
             enriched_blocks = enrich_blocks(blocks)
-            vectorstore, bm25_retriever = chunk_and_store(enriched_blocks,pdf)
+            chunk_and_store(enriched_blocks,pdf)
             ingested_files.append(pdf)
             with open("ingested_files.json", "w") as f:
                 json.dump(ingested_files, f)
-    
-    if vectorstore == None and bm25_retriever == None:
-        vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embeddings, collection_name="doceval")
-        with open("bm25_corpus.json", "r") as f:
-            bm25_corpus = json.load(f)
-        
-        bm25_corpus = [dict_to_doc(doc) for doc in bm25_corpus]
-        bm25_retriever = BM25Retriever.from_documents(bm25_corpus, k=config.CROSSENCODER_KIN)
 
-    return vectorstore, bm25_retriever
+    return rag_client

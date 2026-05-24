@@ -3,4 +3,3 @@
 __pycache__
 *.pyc
 ingested_files.json
-bm25_corpus.json
