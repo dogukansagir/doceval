@@ -2,19 +2,21 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-A production-oriented RAG pipeline that ingests PDFs (including PDFs with images), answers questions using a hybrid retrieval strategy, and continuously self-evaluates and retries to improve answer quality before returning a response. Exposes both a Gradio chat UI and a FastAPI REST endpoint, sharing the same underlying pipeline.
+A production-grade RAG pipeline that ingests PDFs (including PDFs with images), answers questions using a hybrid retrieval strategy with ColBERT reranking, and continuously self-evaluates and retries to improve answer quality before returning a response. Exposes both a Gradio chat UI and a FastAPI REST API.
 
 ---
 
 ## Features
 
 - **Multimodal PDF ingestion** — extracts text blocks and images; images are described via a Vision Language Model (Gemini) before being stored
-- **Hybrid retrieval** — combines dense vector search (Chroma + Sentence Transformers) and sparse keyword search (BM25), with configurable weights
-- **Cross-encoder reranking** — reranks retrieved chunks using a cross-encoder model for higher precision
+- **Hybrid retrieval** — combines dense vector search and sparse BM25 search natively in Qdrant, with configurable weighted RRF fusion
+- **ColBERT late interaction reranking** — reranks retrieved chunks server-side in Qdrant Cloud using MaxSim for higher precision
 - **Query rewriting** — rewrites follow-up questions into standalone queries using conversation history
 - **Self-evaluation loop** — scores each answer on Faithfulness, Answer Relevancy, Answer Correctness, and Context Precision, then retries with targeted feedback if any metric falls below its threshold
-- **Gradio UI** — a browser-based chat interface with visible evaluation scores, sources, and the rewritten query
-- **FastAPI REST API** — a `POST /evaluate` endpoint for programmatic access with full multi-turn chat history support
+- **Persistent storage** — PDFs and ingestion tracking stored in AWS S3, survives container restarts
+- **Secrets management** — API keys stored in AWS Secrets Manager, falls back to `.env` for local development
+- **Gradio UI** — browser-based chat interface with visible evaluation scores, sources, rewritten query, and database management buttons
+- **FastAPI REST API** — `/evaluate`, `/ingest`, `/reset`, and `/health` endpoints for programmatic access
 
 ---
 
@@ -27,13 +29,19 @@ User Question
 Query Rewriting (DeepSeek)
       │
       ▼
-Hybrid Retrieval (BM25 + Chroma)
+Hybrid Retrieval (Dense + Sparse BM25 in Qdrant)
+      │
+      ▼
+Weighted RRF Fusion
       │
       ▼
 Context Precision Check ──── below threshold? ──► Re-retrieve (adjusted weights) ──┐
       │                                                                            │
       └────────────────────────────────────────────────────────────────────────────┘
       │  (best context selected)
+      ▼
+ColBERT Late Interaction Reranking (Qdrant Cloud)
+      │
       ▼
 Answer Generation (DeepSeek)
       │
@@ -48,18 +56,14 @@ Post-Answer Evaluation (Faithfulness / Relevancy / Correctness)
 ### Service Layer
 
 ```
-FastAPI (uvicorn main:app)
-├── POST /evaluate   ← REST API for programmatic access
-├── /ui              ← Gradio chat interface (mounted)
-└── /docs            ← Auto-generated API docs
-
-            OR
-
-Gradio only (python app.py)
-└── http://localhost:7860
+uvicorn main:app
+├── POST /evaluate        ← REST API for programmatic access
+├── POST /ingest          ← Trigger ingestion of PDFs from S3
+├── POST /reset           ← Wipe Qdrant collection and S3 PDF tracking
+├── GET  /health          ← Health check endpoint
+├── /ui                   ← Gradio chat interface (mounted)
+└── /docs                 ← Auto-generated API docs
 ```
-
-Both entry points share the same `vectorstore` and `bm25_retriever` loaded once at startup via a shared `state` dict. Uploading a PDF through the Gradio UI updates `state` instantly, making the new document available to the API endpoint immediately.
 
 ---
 
@@ -67,19 +71,17 @@ Both entry points share the same `vectorstore` and `bm25_retriever` loaded once 
 
 ```
 .
-├── app.py           # Standalone Gradio entry point
-├── main.py          # FastAPI entry point with Gradio mounted at /ui
-├── gradio_ui.py     # Shared Gradio UI definition (used by both entry points)
-├── config.py        # All configurable parameters and API keys
-├── eval.py          # Query rewriting, retrieval orchestration, answer generation, evaluation loop
-├── ingest.py        # PDF parsing, VLM image enrichment, chunking, vector store and BM25 storage
-├── prompts.py       # All LLM system prompts
-├── rag.py           # Hybrid retriever and cross-encoder reranker
+├── app.py                # Standalone Gradio entry point (local only)
+├── main.py               # FastAPI entry point with Gradio mounted at /ui
+├── gradio_ui.py          # Shared Gradio UI definition
+├── config.py             # All configurable parameters and API keys
+├── eval.py               # Query rewriting, retrieval orchestration, answer generation, evaluation loop
+├── ingest.py             # PDF parsing, VLM image enrichment, chunking, Qdrant + S3 storage
+├── prompts.py            # All LLM system prompts
+├── rag.py                # Hybrid retriever with weighted RRF and ColBERT reranking
 ├── requirements.txt
-├── pdfs/            # Place your PDF files here before running
-├── chroma_db/       # Auto-created; persisted vector store
-├── bm25_corpus.json          # Auto-created; BM25 corpus with metadata
-└── ingested_files.json       # Auto-created; tracks already-ingested PDFs
+├── Dockerfile
+└── .dockerignore
 ```
 
 ---
@@ -106,18 +108,35 @@ Create a `.env` file in the project root:
 ```env
 DEEPSEEK_API_KEY=your_deepseek_api_key
 GEMINI_API_KEY=your_gemini_api_key
+QDRANT_API_KEY=your_qdrant_api_key
+QDRANT_URL=your_qdrant_cluster_url
 ```
 
-### 4. Add PDFs
+On AWS, these can optionally be stored in Secrets Manager under a secret named `doceval/secrets` as key/value pairs — the app will automatically prefer Secrets Manager over `.env` when running on AWS.
 
-Create a `pdfs/` folder and place your PDF files in it:
+### 4. AWS S3 Setup (required)
 
+S3 is used for persistent PDF storage and ingestion tracking.
+
+- Create an S3 bucket in your preferred region
+- Block all public access
+- Create an IAM user with `AmazonS3FullAccess` and configure it locally:
 ```bash
-mkdir pdfs
-cp your_document.pdf pdfs/
+aws configure
+```
+- Update `config.py` with your bucket name and region:
+```python
+AWS_REGION = "your-region"
+S3_BUCKET_NAME = "your-bucket-name"
 ```
 
-### 5. Run the app
+### 5. Qdrant Cloud Setup
+
+- Create a Qdrant Cloud cluster at [cloud.qdrant.io](https://cloud.qdrant.io)
+- Copy the cluster URL and API key to your `.env`
+- The collection is created automatically on first run
+
+### 6. Run locally
 
 **Gradio UI only:**
 ```bash
@@ -125,7 +144,7 @@ python app.py
 ```
 Available at `http://localhost:7860`
 
-**FastAPI + Gradio (recommended):**
+**FastAPI + Gradio:**
 ```bash
 uvicorn main:app --reload
 ```
@@ -135,6 +154,12 @@ uvicorn main:app --reload
 | `http://localhost:8000/ui` | Gradio chat interface |
 | `http://localhost:8000/evaluate` | REST API endpoint |
 | `http://localhost:8000/docs` | Auto-generated API docs |
+
+---
+
+## Cloud Deployment
+
+The app is fully containerized via the provided `Dockerfile` and deployable on any container hosting platform. For AWS ECS Fargate deployment specifically, refer to the [AWS ECS documentation](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/getting-started.html).
 
 ---
 
@@ -175,28 +200,41 @@ uvicorn main:app --reload
 }
 ```
 
-Multi-turn conversations are supported by passing the `chat_history` returned from each response back into the next request.
+### `POST /ingest`
+
+Triggers ingestion of all new PDFs found in S3 that haven't been ingested yet. Runs as a background task.
+
+### `POST /reset`
+
+Wipes the Qdrant collection and clears `ingested_files.json` from S3. Use before re-ingesting from scratch.
+
+### `GET /health`
+
+Returns `{"status": "ok"}`.
 
 ---
 
 ## Configuration
 
-All parameters are in `config.py`. Key ones are:
+All parameters are in `config.py`:
 
 | Parameter | Default | Description |
 |---|---|---|
 | `CHUNK_SIZE` | 512 | Token size of each text chunk |
 | `CHUNK_OVERLAP` | 64 | Overlap between consecutive chunks |
-| `CROSSENCODER_KIN` | 30 | Chunks passed into the cross-encoder |
+| `CROSSENCODER_KIN` | 30 | Chunks passed into ColBERT reranker |
 | `CROSSENCODER_KOUT` | 5 | Top chunks selected after reranking |
-| `BM25_WEIGHT` | 0.4 | Initial weight for BM25 retriever |
-| `COSINE_WEIGHT` | 0.6 | Initial weight for vector retriever |
+| `BM25_WEIGHT` | 1.0 | Initial weight for sparse retriever |
+| `COSINE_WEIGHT` | 1.5 | Initial weight for dense retriever |
 | `RETRY_COUNT` | 3 | Max answer regeneration retries |
 | `CONTEXT_PRECISION_RETRY_COUNT` | 3 | Max retrieval retries |
 | `FAITHFULNESS_THRESHOLD` | 0.70 | Minimum passing score |
 | `ANSWER_RELEVANCY_THRESHOLD` | 0.70 | Minimum passing score |
 | `ANSWER_CORRECTNESS_THRESHOLD` | 0.70 | Minimum passing score |
 | `CONTEXT_PRECISION_THRESHOLD` | 0.80 | Minimum passing score |
+| `AWS_REGION` | eu-north-1 | AWS region for S3 |
+| `S3_BUCKET_NAME` | doceval-pdf-storage | S3 bucket for PDFs and tracking |
+| `QDRANT_COLLECTION_NAME` | doceval | Qdrant collection name |
 
 ---
 
@@ -208,8 +246,9 @@ All parameters are in `config.py`. Key ones are:
 | Judge LLM (evaluation) | `deepseek-v4-flash` | DeepSeek |
 | Retry Judge LLM | `deepseek-v4-pro` | DeepSeek |
 | Image description (VLM) | `gemini-3.1-flash-lite` | Google |
-| Text embeddings | `all-MiniLM-L6-v2` | Sentence Transformers |
-| Cross-encoder reranker | `ms-marco-MiniLM-L-6-v2` | Sentence Transformers |
+| Dense embeddings | `all-MiniLM-L6-v2` | FastEmbed |
+| Sparse embeddings (BM25) | `Qdrant/bm25` | FastEmbed |
+| Late interaction reranker | `answerai-colbert-small-v1` | FastEmbed |
 
 ---
 
@@ -219,26 +258,38 @@ Each response is scored by a judge LLM on four metrics:
 
 - **Faithfulness** — Is the answer supported by the retrieved context? Claims not found in the retrieved chunks lower this score.
 - **Answer Relevancy** — Does the answer actually address the question asked?
-- **Answer Correctness** — Is the answer factually correct? Scored as `Unavailable` when ground truth is not available.
+- **Answer Correctness** — Is the answer factually correct? Scored as `Unavailable` when ground truth cannot be determined.
 - **Context Precision** — Are the retrieved chunks relevant to the question? Evaluated before answer generation; triggers re-retrieval with adjusted BM25/cosine weights if below threshold.
 
-When an answer fails on any metric, the system retries with a targeted system prompt indicating which metric failed. If the scores are still under the threshold after `RETRY_COUNT` attempts, the best-scoring answer across all attempts is returned.
+When an answer fails on any metric, the system retries with a targeted system prompt indicating which metric failed. The best-scoring answer across all attempts is returned.
 
-The evaluation uses a two-tier judge strategy: the first pass uses `deepseek-v4-flash` for speed. If the answer fails and enters the retry loop, `deepseek-v4-pro` takes over as the judge for higher reliability. This keeps the happy path fast while ensuring retries are evaluated with maximum accuracy.
+The evaluation uses a two-tier judge strategy: the first pass uses `deepseek-v4-flash` for speed. If the answer fails and enters the retry loop, `deepseek-v4-pro` takes over for higher reliability.
 
 ---
 
-## Adding New PDFs at Runtime
+## Adding New PDFs
 
-You can upload PDFs directly through the Gradio UI using the **Upload PDF** panel. The file will be saved to `pdfs/`, ingested, and added to the existing vector store and BM25 corpus without reprocessing previously ingested files. When running via `uvicorn main:app`, the updated retrievers are instantly available to the API endpoint as well.
+**Via Gradio UI:** Use the Upload PDF panel. Files are uploaded to S3 and ingested immediately.
+
+**Via AWS S3 Console:**
+1. Open your S3 bucket
+2. Navigate to the `pdfs/` folder (create it if it doesn't exist)
+3. Click **Upload** and select your PDF files
+4. Then click **Ingest PDFs from Server** in the Gradio UI or call `POST /ingest`
+
+**Via AWS CLI:**
+```bash
+aws s3 cp yourfile.pdf s3://your-bucket-name/pdfs/yourfile.pdf
+```
+Then click **Ingest PDFs from Server** in the Gradio UI or call `POST /ingest`.
 
 ---
 
 ## Notes
 
 - The Gemini VLM call includes a 4-second sleep between image requests to stay within the free-tier rate limit (15 RPM). Adjust or remove this in `ingest.py` if you are on a higher quota.
-- `ingested_files.json` prevents re-ingesting the same PDF on restart. Delete it (along with `chroma_db/` and `bm25_corpus.json`) to do a full re-ingest from scratch.
 - `Answer Correctness` cannot be evaluated without an external ground truth, so the judge returns `Unavailable` when the retrieved context is insufficient to verify correctness. This does not count as a FAIL.
+- Weights in the RRF fusion are relative — `COSINE_WEIGHT=1.5` and `BM25_WEIGHT=1.0` means dense retrieval is weighted 1.5x over sparse, not that they sum to 1.
 
 ---
 
